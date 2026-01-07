@@ -7,6 +7,7 @@ import os
 import sys
 import warnings
 import uuid
+import subprocess
 
 warnings.filterwarnings('ignore')
 
@@ -24,6 +25,11 @@ import numpy as np
 from .express_adaption.media_pipe import FaceMeshDetector, FaceMeshAlign_dreamidv
 from .express_adaption.get_video_npy import get_video_npy
 import folder_paths
+
+try:
+    from comfy_api.input_impl.video_types import VideoFromFile
+except ImportError:
+    VideoFromFile = None
 
 def generate_pose_and_mask_videos(ref_video_path, ref_image_path):
 
@@ -140,27 +146,126 @@ class RunningHub_DreamID_V_Sampler:
                 "pipeline": ("RH_DreamID-V_Pipeline", ),
                 "video": ("VIDEO", ),
                 "ref_image": ("IMAGE", ),
-                # "width": ("INT", {"default": 832,}),
-                # "height": ("INT", {"default": 480,}),
-                "size": (["832*480", "1280*720"], {"default": "832*480"}),
+                "size": (["832*480", "1280*720", "480*832", "720*1280", "custom"], {"default": "832*480"}),
                 "frame_num": ("INT", {"default": 81, "min": 1, 'step': 4}),
                 "sample_steps": ("INT", {"default": 20,}),
                 "fps": ("INT", {"default": 24,}),
                 "seed": ("INT", {"default": 42, "min": 0, "max": 0xffffffffffffffff}),
+            },
+            "optional": {
+                "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
+                "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
             }
         }
 
-    RETURN_TYPES = ('IMAGE', )
-    RETURN_NAMES = ('frames', )
+    RETURN_TYPES = ('IMAGE', 'VIDEO')
+    RETURN_NAMES = ('frames', 'video')
     FUNCTION = "sample"
     CATEGORY = "RunningHub/DreamID-V"
 
     OUTPUT_NODE = True
 
-    def tensor_2_pil(self,img_tensor):
+    def tensor_2_pil(self, img_tensor):
         i = 255. * img_tensor.squeeze().cpu().numpy()
         img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
         return img
+
+    def create_video_with_audio(self, frames_tensor, fps, source_video_path, output_path):
+        """
+        Create video from frames tensor and copy audio from source video.
+        
+        Args:
+            frames_tensor: Tensor of shape (N, H, W, C) with values in [0, 1]
+            fps: Frames per second
+            source_video_path: Path to source video for audio extraction
+            output_path: Output video file path
+        """
+        temp_video_path = output_path.replace('.mp4', '_temp.mp4')
+        
+        # Convert tensor to numpy frames
+        frames_np = (frames_tensor.cpu().numpy() * 255).astype(np.uint8)
+        num_frames, height, width, channels = frames_np.shape
+        
+        # Write frames to temp video using cv2
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(temp_video_path, fourcc, fps, (width, height))
+        
+        if not video_writer.isOpened():
+            raise RuntimeError(f"Failed to open video writer for {temp_video_path}")
+        
+        for i in range(num_frames):
+            # Convert RGB to BGR for cv2
+            frame_bgr = cv2.cvtColor(frames_np[i], cv2.COLOR_RGB2BGR)
+            video_writer.write(frame_bgr)
+        
+        video_writer.release()
+        print(f"[DreamID-V] Wrote {num_frames} frames to temp video")
+        
+        # Check if source video has audio
+        has_audio = False
+        try:
+            probe_cmd = [
+                'ffprobe', '-v', 'quiet', '-print_format', 'json',
+                '-show_streams', '-select_streams', 'a:0', source_video_path
+            ]
+            result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                import json
+                info = json.loads(result.stdout)
+                if info.get('streams'):
+                    has_audio = True
+        except Exception as e:
+            print(f"[DreamID-V] Could not probe audio: {e}")
+        
+        # Combine video with audio from source
+        if has_audio:
+            print(f"[DreamID-V] Copying audio from source video...")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', temp_video_path,
+                '-i', source_video_path,
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '18',
+                '-c:a', 'aac',
+                '-map', '0:v:0',
+                '-map', '1:a:0?',
+                '-shortest',
+                output_path
+            ]
+        else:
+            print(f"[DreamID-V] No audio in source video, encoding video only...")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', temp_video_path,
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '18',
+                output_path
+            ]
+        
+        try:
+            process = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if process.returncode != 0:
+                print(f"[DreamID-V] FFmpeg error: {process.stderr}")
+                raise RuntimeError(f"FFmpeg failed: {process.stderr}")
+            print(f"[DreamID-V] Video created successfully: {output_path}")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Video encoding timed out")
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_video_path):
+                os.remove(temp_video_path)
+        
+        return output_path
+
+    def create_video_object(self, video_path):
+        """Create ComfyUI VIDEO object"""
+        if VideoFromFile is not None:
+            return VideoFromFile(video_path)
+        else:
+            # Fallback: return file path as string
+            return video_path
 
     def sample(self, **kwargs):
 
@@ -179,9 +284,13 @@ class RunningHub_DreamID_V_Sampler:
         ref_image = self.tensor_2_pil(kwargs.get('ref_image'))
         ref_image_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.png')
         ref_image.save(ref_image_path)
-        # width = kwargs.get('width')
-        # height = kwargs.get('height')
         size = kwargs.get('size')
+        if size == 'custom':
+            custom_width = kwargs.get('custom_width', 832)
+            custom_height = kwargs.get('custom_height', 480)
+            size_tuple = (custom_width, custom_height)
+        else:
+            size_tuple = SIZE_CONFIGS[size]
         seed = kwargs.get('seed') ^ (2 ** 32)
         frame_num = kwargs.get('frame_num')
 
@@ -203,10 +312,10 @@ class RunningHub_DreamID_V_Sampler:
 
         self.update()
 
-        video = pipeline.generate(
+        generated = pipeline.generate(
             text_prompt,
             ref_paths,
-            size=SIZE_CONFIGS[size],
+            size=size_tuple,
             frame_num=frame_num,
             shift=sample_shift,
             sample_solver=sample_solver,
@@ -214,9 +323,23 @@ class RunningHub_DreamID_V_Sampler:
             guide_scale_img=sample_guide_scale_img,
             seed=seed,
             update_fn=self.update)
-        print(f'video:{video.shape}')
-        video = (video.clamp(-1, 1).cpu().permute(1, 2, 3, 0) + 1.0) / 2.0
-        return (video, )
+        print(f'generated video shape: {generated.shape}')
+        
+        # Convert to frames tensor (N, H, W, C) with values in [0, 1]
+        frames = (generated.clamp(-1, 1).cpu().permute(1, 2, 3, 0) + 1.0) / 2.0
+        
+        # Create output video with audio from source
+        fps = kwargs.get('fps')
+        output_dir = folder_paths.get_output_directory()
+        output_filename = f"dreamidv_{uuid.uuid4()}.mp4"
+        output_path = os.path.join(output_dir, output_filename)
+        
+        self.create_video_with_audio(frames, fps, ref_video_path, output_path)
+        
+        # Create VIDEO object
+        video_obj = self.create_video_object(output_path)
+        
+        return (frames, video_obj)
 
     def update(self):
         self.pbar.update(1)
