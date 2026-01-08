@@ -268,6 +268,9 @@ class HybridLMKExtractor:
         """
         Extract face landmarks from image.
         
+        Uses InsightFace to verify face presence, but always runs MediaPipe on
+        the FULL image to get correct landmarks and transformation matrices.
+        
         Args:
             img_bgr: BGR image (OpenCV format)
             debug: Enable debug logging
@@ -275,55 +278,32 @@ class HybridLMKExtractor:
         Returns:
             dict with lmks, lmks3d, trans_mat, faces, bs or None if no face
         """
-        h, w = img_bgr.shape[:2]
+        # First, try MediaPipe on full image (this gives correct coordinates)
+        result = self._extract_landmarks_mediapipe(img_bgr, debug)
         
-        # Try InsightFace detection first
+        if result is not None:
+            if debug:
+                print(f"[HybridLMKExtractor] MediaPipe detected face on full image")
+            return result
+        
+        # MediaPipe failed, check if InsightFace can detect a face
         if self.use_insightface:
             detections = self.insightface_detector.detect(img_bgr)
             
-            if len(detections) == 0:
+            if len(detections) > 0:
+                # InsightFace found a face but MediaPipe couldn't
+                # This might be a difficult pose - return None and let caller handle
                 if debug:
-                    print(f"[HybridLMKExtractor] InsightFace: no valid face detected, trying MediaPipe")
-                # Fall back to MediaPipe direct detection
-                return self._extract_landmarks_mediapipe(img_bgr, debug)
-            
-            # Sort by score * area (prefer confident large faces)
-            # Score weight is higher to prefer confident detections
-            detections.sort(key=lambda x: x[1] * 2 + x[2] / (w * h), reverse=True)
-            
-            if debug and len(detections) > 1:
-                print(f"[HybridLMKExtractor] InsightFace: {len(detections)} valid faces, using best")
-            
-            # Try faces in order of quality until one works with MediaPipe
-            for bbox, score, area in detections[:3]:  # Try top 3 candidates
-                cropped, offset, crop_size = self._crop_and_pad_face(img_bgr, bbox)
-                
+                    print(f"[HybridLMKExtractor] InsightFace found {len(detections)} faces but MediaPipe failed")
+                return None
+            else:
                 if debug:
-                    print(f"[HybridLMKExtractor] Trying face at {bbox.tolist()}, score={score:.2f}, size={crop_size}")
-                
-                # Run MediaPipe on cropped image
-                result = self._extract_landmarks_mediapipe(cropped, debug=False)
-                
-                if result is not None:
-                    # Map landmarks back to original image coordinates
-                    crop_h, crop_w = cropped.shape[:2]
-                    ox, oy = offset
-                    
-                    # lmks are normalized [0,1], need to map to original image
-                    lmks = result['lmks'].copy()
-                    lmks[:, 0] = (lmks[:, 0] * crop_w + ox) / w
-                    lmks[:, 1] = (lmks[:, 1] * crop_h + oy) / h
-                    result['lmks'] = lmks
-                    
-                    return result
-            
-            # All InsightFace candidates failed, try full image MediaPipe
-            if debug:
-                print(f"[HybridLMKExtractor] All InsightFace candidates failed, trying full image MediaPipe")
-            return self._extract_landmarks_mediapipe(img_bgr, debug)
+                    print(f"[HybridLMKExtractor] No face detected by either InsightFace or MediaPipe")
+                return None
         else:
-            # MediaPipe only mode
-            return self._extract_landmarks_mediapipe(img_bgr, debug)
+            if debug:
+                print(f"[HybridLMKExtractor] MediaPipe failed to detect face")
+            return None
 
 
 def get_extractor(use_insightface=True, min_detection_confidence=0.5, insightface_det_thresh=0.3):
