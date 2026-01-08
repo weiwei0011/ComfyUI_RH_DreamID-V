@@ -25,7 +25,7 @@ import numpy as np
 from .express_adaption.media_pipe import FaceMeshDetector, FaceMeshAlign_dreamidv
 from .express_adaption.get_video_npy import get_video_npy
 import folder_paths
-
+from .express_adaption.get_video_npy import prehandle_video
 try:
     from comfy_api.input_impl.video_types import VideoFromFile
 except ImportError:
@@ -121,7 +121,7 @@ class RunningHub_DreamID_V_Loader:
     FUNCTION = "load"
     CATEGORY = "RunningHub/DreamID-V"
 
-    OUTPUT_NODE = True
+    # OUTPUT_NODE = True
 
     def load(self, **kwargs):
         # hardcode
@@ -163,7 +163,7 @@ class RunningHub_DreamID_V_Sampler:
     FUNCTION = "sample"
     CATEGORY = "RunningHub/DreamID-V"
 
-    OUTPUT_NODE = True
+    # OUTPUT_NODE = True
 
     def tensor_2_pil(self, img_tensor):
         i = 255. * img_tensor.squeeze().cpu().numpy()
@@ -267,6 +267,10 @@ class RunningHub_DreamID_V_Sampler:
             # Fallback: return file path as string
             return video_path
 
+    def frame_2_tensor(self, frame, target_w, target_h):
+        resized_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        return torch.from_numpy(np.array(resized_frame).astype(np.float32) / 255.0)
+
     def sample(self, **kwargs):
 
         #kiki hardcode
@@ -280,7 +284,12 @@ class RunningHub_DreamID_V_Sampler:
         print(pipeline.config)
         sample_steps = kwargs.get('sample_steps')
         self.pbar = comfy.utils.ProgressBar(sample_steps + 1)
-        ref_video_path = kwargs.get('video').get_stream_source()
+        # ref_video_path = kwargs.get('video').get_stream_source()
+        video_path = kwargs.get('video').get_stream_source()
+        ref_video_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.mp4')
+        skip_frames_index, skip_frames_data = prehandle_video(video_path, ref_video_path)
+        print(f'skip_frames_index: {skip_frames_index}')
+        
         ref_image = self.tensor_2_pil(kwargs.get('ref_image'))
         ref_image_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.png')
         ref_image.save(ref_image_path)
@@ -327,6 +336,16 @@ class RunningHub_DreamID_V_Sampler:
         
         # Convert to frames tensor (N, H, W, C) with values in [0, 1]
         frames = (generated.clamp(-1, 1).cpu().permute(1, 2, 3, 0) + 1.0) / 2.0
+        print(frames.shape)
+
+        frames_list = list(torch.unbind(frames, dim=0))
+        target_w, target_h = frames.shape[2], frames.shape[1]
+        for i in skip_frames_index:
+            if i < frame_num:
+                frames_list.insert(i, self.frame_2_tensor(skip_frames_data[i], target_w, target_h))
+        frames_list = frames_list[:frame_num]
+        frames = torch.stack(frames_list, dim=0)
+        # print(frames.shape)
         
         # Create output video with audio from source
         fps = kwargs.get('fps')
@@ -334,7 +353,8 @@ class RunningHub_DreamID_V_Sampler:
         output_filename = f"dreamidv_{uuid.uuid4()}.mp4"
         output_path = os.path.join(output_dir, output_filename)
         
-        self.create_video_with_audio(frames, fps, ref_video_path, output_path)
+        # self.create_video_with_audio(frames, fps, ref_video_path, output_path)
+        self.create_video_with_audio(frames, fps, video_path, output_path)
         
         # Create VIDEO object
         video_obj = self.create_video_object(output_path)
@@ -344,7 +364,81 @@ class RunningHub_DreamID_V_Sampler:
     def update(self):
         self.pbar.update(1)
 
+class RunningHub_DreamID_V_Sampler_Test:
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                #"type": (["Wan2.2 I2V", "Wan2.1 T2V"], ),
+                # "pipeline": ("RH_DreamID-V_Pipeline", ),
+                "video": ("VIDEO", ),
+                "ref_image": ("IMAGE", ),
+                "size": (["832*480", "1280*720", "480*832", "720*1280", "custom"], {"default": "832*480"}),
+                "frame_num": ("INT", {"default": 81, "min": 1, 'step': 4}),
+                "sample_steps": ("INT", {"default": 20,}),
+                "fps": ("INT", {"default": 24,}),
+                "seed": ("INT", {"default": 42, "min": 0, "max": 0xffffffffffffffff}),
+            },
+            "optional": {
+                "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
+                "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
+            }
+        }
+
+    RETURN_TYPES = ('IMAGE', 'VIDEO')
+    RETURN_NAMES = ('frames', 'video')
+    FUNCTION = "sample"
+    CATEGORY = "RunningHub/DreamID-V"
+
+    OUTPUT_NODE = True
+
+    def tensor_2_pil(self, img_tensor):
+        i = 255. * img_tensor.squeeze().cpu().numpy()
+        img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+        return img
+
+    def sample(self, **kwargs):
+
+        #kiki hardcode
+        sample_shift = 5.0
+        sample_solver = 'unipc'
+        sample_guide_scale_img = 4.0
+        fps = kwargs.get('fps')
+
+        sample_steps = kwargs.get('sample_steps')
+        self.pbar = comfy.utils.ProgressBar(sample_steps + 1)
+        # ref_video_path = kwargs.get('video').get_stream_source()
+        video_path = kwargs.get('video').get_stream_source()
+        ref_video_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.mp4')
+        skip_frames_index, skip_frames_data = prehandle_video(video_path, ref_video_path, fps)
+        print(f'skip_frames_index: {skip_frames_index}')
+        
+        ref_image = self.tensor_2_pil(kwargs.get('ref_image'))
+        ref_image_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.png')
+        ref_image.save(ref_image_path)
+        size = kwargs.get('size')
+
+        import imageio
+        frames = imageio.get_reader(ref_video_path)
+        images = []
+        for i, frame in enumerate(frames):
+            print(frame.shape)
+            image = torch.from_numpy(np.array(frame).astype(np.float32) / 255.0)
+            images.append(image)
+        images = torch.stack(images)
+        print(images.shape)
+        frames_list = list(torch.unbind(images, dim=0))
+        for i in skip_frames_index:
+            print(skip_frames_data[i].shape)
+            frames_list.insert(i, torch.from_numpy(np.array(skip_frames_data[i]).astype(np.float32) / 255.0))
+        images = torch.stack(frames_list, dim=0)
+
+        return (images, )
+
+
 NODE_CLASS_MAPPINGS = {
     "RunningHub_DreamID-V_Loader": RunningHub_DreamID_V_Loader,
     "RunningHub_DreamID-V_Sampler": RunningHub_DreamID_V_Sampler,
+    # "RunningHub_DreamID_V_Sampler_With_Audio": RunningHub_DreamID_V_Sampler_Test,
 }

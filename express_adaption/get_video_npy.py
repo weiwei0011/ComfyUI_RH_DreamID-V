@@ -36,15 +36,44 @@ from .media_pipe.pose_util import project_points_with_trans, matrix_to_euler_and
 lmk_extractor = LMKExtractor()
 vis = FaceMeshVisualizer(forehead_edge=False)
 
+def prehandle_video(video_path, save_path, fps=24):
+    frames = imageio.get_reader(video_path)
+    meta = frames.get_meta_data()
+
+    # size = meta.get('size')
+    codec = meta.get('codec', 'libx264')
+    writer = imageio.get_writer(
+        save_path, 
+        fps=fps, 
+        codec=codec, 
+        macro_block_size=1,
+        quality=10
+    )
+    skip_frames_index = []
+    skip_frames_data = {}
+    for i, frame in enumerate(frames):
+        frame_bgr = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
+        face_result = lmk_extractor(frame_bgr)
+        if face_result is None:
+            # print(f'frame {i} no face detected')
+            skip_frames_index.append(i)
+            skip_frames_data[i] = frame
+            continue
+        writer.append_data(frame)
+        # print(f'frame {i} done')
+    writer.close()
+    return skip_frames_index, skip_frames_data
+
 def get_video_npy(video_path):
 
     
 
     frames = imageio.get_reader(video_path)
+    # print(f'frames count: {len(frames)}')
 
     face_results = []
     
-    for frame in frames:
+    for i, frame in enumerate(frames):
         frame_bgr = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
         
         face_result = lmk_extractor(frame_bgr)
