@@ -48,7 +48,7 @@ except ImportError as e:
 lmk_extractor = LMKExtractor(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 vis = FaceMeshVisualizer(forehead_edge=False)
 
-def prehandle_video(video_path, save_path, fps=24, debug=False, min_detection_confidence=0.5, use_insightface=False):
+def prehandle_video(video_path, save_path, fps=24, debug=False, min_detection_confidence=0.5, use_insightface=True):
     """
     Preprocess video: filter frames with detectable faces and save face detection results.
     
