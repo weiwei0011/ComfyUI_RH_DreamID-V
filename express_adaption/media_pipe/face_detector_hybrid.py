@@ -21,6 +21,46 @@ try:
 except ImportError:
     print("[HybridDetector] InsightFace not available, falling back to MediaPipe only")
 
+# Get ComfyUI models path for InsightFace models
+def get_insightface_model_root():
+    """
+    Get InsightFace model root directory.
+    Priority:
+    1. {ComfyUI}/models/insightface
+    2. Default ~/.insightface
+    """
+    # Try to find ComfyUI models path
+    try:
+        import folder_paths
+        comfy_models_path = folder_paths.models_dir
+        insightface_path = os.path.join(comfy_models_path, "insightface")
+        if os.path.exists(insightface_path):
+            print(f"[HybridDetector] Using InsightFace models from: {insightface_path}")
+            return insightface_path
+    except ImportError:
+        pass
+    
+    # Try relative path from this file (for standalone testing)
+    # Go up to ComfyUI_RH_DreamID-V, then to parent ComfyUI/models/insightface
+    current_dir = os.path.dirname(__file__)
+    possible_paths = [
+        # Standard ComfyUI custom_nodes layout
+        os.path.join(current_dir, "..", "..", "..", "..", "models", "insightface"),
+        # Alternative layout
+        os.path.join(current_dir, "..", "..", "..", "models", "insightface"),
+    ]
+    
+    for path in possible_paths:
+        abs_path = os.path.abspath(path)
+        if os.path.exists(abs_path):
+            print(f"[HybridDetector] Using InsightFace models from: {abs_path}")
+            return abs_path
+    
+    # Fallback to default (will try to download if not exists)
+    default_path = os.path.expanduser("~/.insightface")
+    print(f"[HybridDetector] Using default InsightFace path: {default_path}")
+    return default_path
+
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -32,24 +72,41 @@ CUR_DIR = os.path.dirname(__file__)
 class InsightFaceDetector:
     """InsightFace-based face detector for robust detection."""
     
-    def __init__(self, det_size=(640, 640), det_thresh=0.3):
+    def __init__(self, det_size=(640, 640), det_thresh=0.3, model_name='buffalo_l'):
         """
         Initialize InsightFace detector.
         
         Args:
             det_size: Detection input size
             det_thresh: Detection threshold (lower = more detections)
+            model_name: Model name (default: buffalo_l)
         """
         if not INSIGHTFACE_AVAILABLE:
             raise RuntimeError("InsightFace is not installed. Run: pip install insightface onnxruntime")
         
+        # Get model root directory (use ComfyUI models path if available)
+        model_root = get_insightface_model_root()
+        
+        # Check if model exists locally
+        model_path = os.path.join(model_root, "models", model_name)
+        if not os.path.exists(model_path):
+            # Try without 'models' subdirectory
+            model_path = os.path.join(model_root, model_name)
+        
+        if os.path.exists(model_path):
+            print(f"[InsightFaceDetector] Found local model at: {model_path}")
+        else:
+            print(f"[InsightFaceDetector] WARNING: Model not found at {model_path}, may attempt download")
+        
         self.app = FaceAnalysis(
+            name=model_name,
+            root=model_root,
             allowed_modules=['detection'],  # Only use detection module
             providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
         )
         self.app.prepare(ctx_id=0, det_size=det_size, det_thresh=det_thresh)
         self.det_thresh = det_thresh
-        print(f"[InsightFaceDetector] Initialized with det_thresh={det_thresh}")
+        print(f"[InsightFaceDetector] Initialized with det_thresh={det_thresh}, model={model_name}")
     
     def detect(self, img_bgr):
         """
