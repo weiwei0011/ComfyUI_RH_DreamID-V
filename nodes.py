@@ -31,8 +31,16 @@ try:
 except ImportError:
     VideoFromFile = None
 
-def generate_pose_and_mask_videos(ref_video_path, ref_image_path):
-
+def generate_pose_and_mask_videos(ref_video_path, ref_image_path, face_results=None, fps=None):
+    """
+    Generate pose and mask videos from reference video.
+    
+    Args:
+        ref_video_path: Path to the reference video
+        ref_image_path: Path to the reference image
+        face_results: Pre-computed face detection results (optional, avoids re-detection)
+        fps: Video fps (optional, will be read from video if not provided)
+    """
     print("Starting online generation of pose and mask videos...")
     detector = FaceMeshDetector()
     get_align_motion = FaceMeshAlign_dreamidv()
@@ -72,8 +80,15 @@ def generate_pose_and_mask_videos(ref_video_path, ref_image_path):
             video_writer.write(frame_image)
         video_writer.release()
         print("Video saving complete.")
-    fps = cv2.VideoCapture(ref_video_path).get(cv2.CAP_PROP_FPS)
-    face_results = get_video_npy(ref_video_path)
+    
+    # Get fps from video if not provided
+    if fps is None:
+        fps = cv2.VideoCapture(ref_video_path).get(cv2.CAP_PROP_FPS)
+    
+    # Use provided face_results or detect from video
+    if face_results is None:
+        face_results = get_video_npy(ref_video_path)
+    
     video_name = os.path.basename(ref_video_path).split('.')[0]
     #kiki:
     # temp_dir = os.path.join(os.path.dirname(ref_video_path), 'temp_generated')
@@ -155,6 +170,7 @@ class RunningHub_DreamID_V_Sampler:
             "optional": {
                 "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
                 "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
+                "face_detection_threshold": ("FLOAT", {"default": 0.5, "min": 0.1, "max": 1.0, "step": 0.05}),
             }
         }
 
@@ -287,8 +303,16 @@ class RunningHub_DreamID_V_Sampler:
         # ref_video_path = kwargs.get('video').get_stream_source()
         video_path = kwargs.get('video').get_stream_source()
         ref_video_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.mp4')
-        skip_frames_index, skip_frames_data = prehandle_video(video_path, ref_video_path)
-        print(f'skip_frames_index: {skip_frames_index}')
+        fps = kwargs.get('fps')
+        # Get face detection threshold (default 0.5)
+        face_detection_threshold = kwargs.get('face_detection_threshold', 0.5)
+        print(f'[DreamID-V] Using face detection threshold: {face_detection_threshold}')
+        # Prehandle video: filter frames with faces and get face detection results
+        skip_frames_index, skip_frames_data, face_results = prehandle_video(
+            video_path, ref_video_path, fps=fps, debug=True, 
+            min_detection_confidence=face_detection_threshold
+        )
+        print(f'skip_frames_index count: {len(skip_frames_index)}, face_results count: {len(face_results)}')
         
         ref_image = self.tensor_2_pil(kwargs.get('ref_image'))
         ref_image_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.png')
@@ -304,9 +328,12 @@ class RunningHub_DreamID_V_Sampler:
         frame_num = kwargs.get('frame_num')
 
         try:
+            # Pass pre-computed face_results to avoid re-detection
             ref_pose_path, ref_mask_path = generate_pose_and_mask_videos(
                 ref_video_path=ref_video_path,
-                ref_image_path=ref_image_path
+                ref_image_path=ref_image_path,
+                face_results=face_results,
+                fps=fps
             )
         except:
             raise ValueError("Pose and mask video generation failed. no pose detected in the reference video.")
@@ -383,6 +410,7 @@ class RunningHub_DreamID_V_Sampler_Test:
             "optional": {
                 "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
                 "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
+                "face_detection_threshold": ("FLOAT", {"default": 0.5, "min": 0.1, "max": 1.0, "step": 0.05}),
             }
         }
 

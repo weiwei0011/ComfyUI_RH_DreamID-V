@@ -33,10 +33,34 @@ from .media_pipe.mp_utils  import LMKExtractor
 from .media_pipe.draw_util import FaceMeshVisualizer
 from .media_pipe.pose_util import project_points_with_trans, matrix_to_euler_and_translation, euler_and_translation_to_matrix
 
-lmk_extractor = LMKExtractor()
+# Default global extractor for backward compatibility (used by get_video_npy)
+# Uses default threshold of 0.5
+lmk_extractor = LMKExtractor(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 vis = FaceMeshVisualizer(forehead_edge=False)
 
-def prehandle_video(video_path, save_path, fps=24):
+def prehandle_video(video_path, save_path, fps=24, debug=False, min_detection_confidence=0.5):
+    """
+    Preprocess video: filter frames with detectable faces and save face detection results.
+    
+    Args:
+        video_path: Path to input video
+        save_path: Path to save filtered video
+        fps: Frames per second
+        debug: Enable debug logging
+        min_detection_confidence: Face detection threshold (0.1-1.0, lower = more detections)
+    
+    Returns:
+        skip_frames_index: list of frame indices that were skipped (no face detected)
+        skip_frames_data: dict mapping frame index to frame data
+        face_results: list of face detection results for frames with faces
+    """
+    # Create extractor with custom threshold
+    extractor = LMKExtractor(
+        min_detection_confidence=min_detection_confidence,
+        min_tracking_confidence=min_detection_confidence
+    )
+    print(f"[prehandle_video] Using detection threshold: {min_detection_confidence}")
+    
     frames = imageio.get_reader(video_path)
     meta = frames.get_meta_data()
 
@@ -51,37 +75,72 @@ def prehandle_video(video_path, save_path, fps=24):
     )
     skip_frames_index = []
     skip_frames_data = {}
+    face_results = []  # Store face results to avoid re-detection
+    total_frames = 0
+    
+    # Only enable debug for first few frames to avoid log spam
+    debug_limit = 10 if debug else 0
+    
     for i, frame in enumerate(frames):
+        total_frames += 1
         frame_bgr = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
-        face_result = lmk_extractor(frame_bgr)
+        
+        # Enable debug for first N frames
+        enable_debug = debug and i < debug_limit
+        face_result = extractor(frame_bgr, debug=enable_debug)
+        
         if face_result is None:
-            # print(f'frame {i} no face detected')
             skip_frames_index.append(i)
             skip_frames_data[i] = frame
             continue
+        
+        # Save face result with frame dimensions
+        face_result['width'] = frame_bgr.shape[1]
+        face_result['height'] = frame_bgr.shape[0]
+        face_results.append(face_result)
+        
         writer.append_data(frame)
-        # print(f'frame {i} done')
     writer.close()
-    return skip_frames_index, skip_frames_data
+    
+    detected_count = total_frames - len(skip_frames_index)
+    print(f"[prehandle_video] Total frames: {total_frames}, detected faces: {detected_count}, skipped: {len(skip_frames_index)}")
+    
+    return skip_frames_index, skip_frames_data, face_results
 
 def get_video_npy(video_path):
-
-    
-
+    """
+    Extract face landmarks from video frames.
+    Frames without detectable faces are skipped.
+    """
     frames = imageio.get_reader(video_path)
-    # print(f'frames count: {len(frames)}')
 
     face_results = []
+    skipped_frames = 0
+    total_frames = 0
     
     for i, frame in enumerate(frames):
+        total_frames += 1
         frame_bgr = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
         
         face_result = lmk_extractor(frame_bgr)
-        assert face_result is not None, "Can not detect a face in the reference image."
+        
+        # Skip frames without detected face
+        if face_result is None:
+            skipped_frames += 1
+            continue
+            
         face_result['width'] = frame_bgr.shape[1]
         face_result['height'] = frame_bgr.shape[0]
         
         face_results.append(face_result)
+    
+    # Log skipped frames info
+    if skipped_frames > 0:
+        print(f"[get_video_npy] Skipped {skipped_frames}/{total_frames} frames without detected face.")
+    
+    # Ensure at least some frames have faces
+    assert len(face_results) > 0, "Can not detect a face in any frame of the reference video."
+    
     return face_results
     
 
