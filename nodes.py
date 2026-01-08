@@ -170,7 +170,7 @@ class RunningHub_DreamID_V_Sampler:
             "optional": {
                 "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
                 "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
-                "face_detection_threshold": ("FLOAT", {"default": 0.5, "min": 0.1, "max": 1.0, "step": 0.05}),
+                "face_detection_threshold": ("FLOAT", {"default": 0.3, "min": 0.1, "max": 1.0, "step": 0.05}),
             }
         }
 
@@ -305,7 +305,7 @@ class RunningHub_DreamID_V_Sampler:
         ref_video_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.mp4')
         fps = kwargs.get('fps')
         # Get face detection threshold (default 0.5)
-        face_detection_threshold = kwargs.get('face_detection_threshold', 0.5)
+        face_detection_threshold = kwargs.get('face_detection_threshold', 0.3)
         print(f'[DreamID-V] Using face detection threshold: {face_detection_threshold}')
         # Prehandle video: filter frames with faces and get face detection results
         # Always use InsightFace + MediaPipe hybrid detection for better results
@@ -412,7 +412,7 @@ class RunningHub_DreamID_V_Sampler_Test:
             "optional": {
                 "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
                 "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
-                "face_detection_threshold": ("FLOAT", {"default": 0.5, "min": 0.1, "max": 1.0, "step": 0.05}),
+                "face_detection_threshold": ("FLOAT", {"default": 0.3, "min": 0.1, "max": 1.0, "step": 0.05}),
             }
         }
 
@@ -442,7 +442,7 @@ class RunningHub_DreamID_V_Sampler_Test:
         video_path = kwargs.get('video').get_stream_source()
         ref_video_path = os.path.join(folder_paths.get_temp_directory(), f'dreamidv_{uuid.uuid4()}.mp4')
         # Get face detection threshold (default 0.5)
-        face_detection_threshold = kwargs.get('face_detection_threshold', 0.5)
+        face_detection_threshold = kwargs.get('face_detection_threshold', 0.3)
         print(f'[DreamID-V Test] Using face detection threshold: {face_detection_threshold}')
         # Always use InsightFace + MediaPipe hybrid detection
         skip_frames_index, skip_frames_data, face_results = prehandle_video(
