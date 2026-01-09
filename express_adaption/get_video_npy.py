@@ -64,7 +64,7 @@ def prehandle_video(video_path, save_path, fps=24):
     writer.close()
     return skip_frames_index, skip_frames_data
 
-def get_video_npy(video_path):
+def get_video_npy(video_path, face_detection_threshold=0.5):
 
     
 
@@ -95,7 +95,7 @@ def get_video_npy(video_path):
 
         frame_bgr = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
         
-        face_result = lmk_extractor(frame_bgr)
+        face_result = lmk_extractor(frame_bgr, det_thresh=face_detection_threshold)
         # assert face_result is not None, "Can not detect a face in the reference image."
         if face_result is None:
             print(f'frame {i} no face detected')

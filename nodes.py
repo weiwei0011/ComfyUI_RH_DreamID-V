@@ -31,7 +31,7 @@ try:
 except ImportError:
     VideoFromFile = None
 
-def generate_pose_and_mask_videos(ref_video_path, ref_image_path):
+def generate_pose_and_mask_videos(ref_video_path, ref_image_path, face_detection_threshold=0.5):
 
     print("Starting online generation of pose and mask videos...")
     detector = FaceMeshDetector()
@@ -90,7 +90,7 @@ def generate_pose_and_mask_videos(ref_video_path, ref_image_path):
         print("Video saving complete.")
     fps = cv2.VideoCapture(ref_video_path).get(cv2.CAP_PROP_FPS)
     # face_results = get_video_npy(ref_video_path)
-    face_results, skip_frames_index, skip_frames_data, detected_frames = get_video_npy(ref_video_path)
+    face_results, skip_frames_index, skip_frames_data, detected_frames = get_video_npy(ref_video_path, face_detection_threshold=face_detection_threshold)
     video_name = os.path.basename(ref_video_path).split('.')[0]
     #kiki:
     # temp_dir = os.path.join(os.path.dirname(ref_video_path), 'temp_generated')
@@ -171,6 +171,7 @@ class RunningHub_DreamID_V_Sampler:
                 "sample_steps": ("INT", {"default": 20,}),
                 "fps": ("INT", {"default": 24,}),
                 "seed": ("INT", {"default": 42, "min": 0, "max": 0xffffffffffffffff}),
+                "face_detection_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {
                 "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
@@ -317,10 +318,12 @@ class RunningHub_DreamID_V_Sampler:
         seed = kwargs.get('seed') ^ (2 ** 32)
         frame_num = kwargs.get('frame_num')
 
+        face_detection_threshold = kwargs.get('face_detection_threshold', 0.5)
         try:
             detected_frames, pose_frames, mask_frames, skip_frames_index, skip_frames_data = generate_pose_and_mask_videos(
                 ref_video_path=ref_video_path,
-                ref_image_path=ref_image_path
+                ref_image_path=ref_image_path,
+                face_detection_threshold=face_detection_threshold
             )
         except:
             raise ValueError("Pose and mask video generation failed. no pose detected in the reference video.")

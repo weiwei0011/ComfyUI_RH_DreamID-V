@@ -58,7 +58,7 @@ class LMKExtractor():
         self.handler.prepare(ctx_id=0, det_size=(640, 640))
                 
 
-    def __call__(self, img):
+    def __call__(self, img, det_thresh=0.5):
         frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
         t0 = time.time()
@@ -82,7 +82,7 @@ class LMKExtractor():
             try:
                 detection_result, mesh3d = self.detector.detect(image)
             except:
-                faces = self.handler.get(frame)
+                faces = self.handler.get(frame, det_thresh=det_thresh)
                 if len(faces) < 1:
                     return None
                 h_orig, w_orig = frame.shape[:2]
