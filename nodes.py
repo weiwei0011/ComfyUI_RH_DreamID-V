@@ -31,8 +31,16 @@ try:
 except ImportError:
     VideoFromFile = None
 
-def generate_pose_and_mask_videos(ref_video_path, ref_image_path):
-
+def generate_pose_and_mask_videos(ref_video_path, ref_image_path, face_results=None, fps=None):
+    """
+    Generate pose and mask videos from reference video.
+    
+    Args:
+        ref_video_path: Path to the reference video
+        ref_image_path: Path to the reference image
+        face_results: Pre-computed face detection results (optional, avoids re-detection)
+        fps: Video fps (optional, will be read from video if not provided)
+    """
     print("Starting online generation of pose and mask videos...")
     detector = FaceMeshDetector()
     get_align_motion = FaceMeshAlign_dreamidv()
@@ -175,6 +183,7 @@ class RunningHub_DreamID_V_Sampler:
             "optional": {
                 "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
                 "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
+                "face_detection_threshold": ("FLOAT", {"default": 0.3, "min": 0.1, "max": 1.0, "step": 0.05}),
             }
         }
 
@@ -320,7 +329,9 @@ class RunningHub_DreamID_V_Sampler:
         try:
             detected_frames, pose_frames, mask_frames, skip_frames_index, skip_frames_data = generate_pose_and_mask_videos(
                 ref_video_path=ref_video_path,
-                ref_image_path=ref_image_path
+                ref_image_path=ref_image_path,
+                face_results=face_results,
+                fps=fps
             )
         except:
             raise ValueError("Pose and mask video generation failed. no pose detected in the reference video.")
@@ -357,16 +368,7 @@ class RunningHub_DreamID_V_Sampler:
         
         # Convert to frames tensor (N, H, W, C) with values in [0, 1]
         frames = (generated.clamp(-1, 1).cpu().permute(1, 2, 3, 0) + 1.0) / 2.0
-        print(frames.shape)
-
-        frames_list = list(torch.unbind(frames, dim=0))
-        target_w, target_h = frames.shape[2], frames.shape[1]
-        for i in skip_frames_index:
-            if i < frame_num:
-                frames_list.insert(i, self.frame_2_tensor(skip_frames_data[i], target_w, target_h))
-        frames_list = frames_list[:frame_num]
-        frames = torch.stack(frames_list, dim=0)
-        # print(frames.shape)
+        print(f'[DreamID-V] Output frames shape: {frames.shape}')
         
         # Create output video with audio from source
         fps = kwargs.get('fps')
@@ -404,6 +406,7 @@ class RunningHub_DreamID_V_Sampler_Test:
             "optional": {
                 "custom_width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8}),
                 "custom_height": ("INT", {"default": 480, "min": 64, "max": 2048, "step": 8}),
+                "face_detection_threshold": ("FLOAT", {"default": 0.3, "min": 0.1, "max": 1.0, "step": 0.05}),
             }
         }
 
