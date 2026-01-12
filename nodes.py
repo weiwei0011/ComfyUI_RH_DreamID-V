@@ -15,7 +15,6 @@ import torch, random
 import torch.distributed as dist
 from PIL import Image, ImageOps
 
-
 import cv2
 import numpy as np
 from .express_adaption.media_pipe import FaceMeshDetector, FaceMeshAlign_dreamidv
