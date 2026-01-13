@@ -81,8 +81,14 @@ class LMKExtractor():
             #     return None
             try:
                 detection_result, mesh3d = self.detector.detect(image)
+                # Check if detection failed (mesh3d is None means no face detected)
+                if mesh3d is None:
+                    raise Exception("No face detected by mediapipe")
             except:
-                faces = self.handler.get(frame, det_thresh=det_thresh)
+                # Set detection threshold for insightface
+                if hasattr(self.handler, 'det_model') and self.handler.det_model is not None:
+                    self.handler.det_model.det_thresh = det_thresh
+                faces = self.handler.get(frame)
                 if len(faces) < 1:
                     return None
                 h_orig, w_orig = frame.shape[:2]
@@ -105,6 +111,9 @@ class LMKExtractor():
                 try:
                     do_insightface = True
                     detection_result, mesh3d = self.detector.detect(mp_image)
+                    # Check if detection failed (mesh3d is None means no face detected)
+                    if mesh3d is None:
+                        raise Exception("No face detected in ROI by mediapipe")
                     # print('face detection success')
                     for landmark in detection_result.face_landmarks[0]:
                         landmark.x = (landmark.x * roi_w + cx1) / w_orig
